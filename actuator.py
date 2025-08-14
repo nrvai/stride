@@ -3,9 +3,11 @@ import can
 import math
 import struct
 
-from enum import IntEnum
+from enum import IntEnum, auto
 from typing import Iterable
 from dataclasses import dataclass
+from collections.abc import Buffer
+
 
 CAN_PORT = "can0"
 ZERO_BYTE = [0, 0, 0, 0, 0, 0, 0, 0]
@@ -50,14 +52,42 @@ class Parameter(IntEnum):
     ZeroSta = 0x7029
 
 
+class MotorMode(IntEnum):
+    Reset = 0
+    Calibration = 1
+    Run = 2
+    Uknown = 3
+
+
+@dataclass
+class MotorStatus:
+    mode: MotorMode
+    has_error: bool
+    unknown_mode: bool
+    uncalibrated: bool
+    gridlock_overload: bool
+    magnetic_coding_fault: bool
+    overtemperature: bool
+    overcurrent: bool
+    undervoltage: bool
+
+
+@dataclass
+class Feedback():
+    motor_id: int
+    status: MotorStatus
+    angle: float
+    velocity: float
+    torque: float
+    temp: float
+
+
 class RobstrideBus:
     def __init__(self):
-        # self.bus = None
-        self.bus = can.interface.Bus(interface='socketcan', channel=CAN_PORT)
-        pass
+        self.can_bus = can.interface.Bus(interface='socketcan', channel=CAN_PORT)
 
     def recv(self):
-        res = self.bus.recv()
+        res = self.can_bus.recv()
         if not res or res.is_error_frame:
             Exception("response error")
         return res
@@ -65,34 +95,8 @@ class RobstrideBus:
     def send(self, comm_type: CommunicationType, id_field: int, data: bytes | bytearray | int | Iterable[int] | None = ZERO_BYTE):
         arb_id = id_field + (comm_type << 24)
         msg = can.Message(arbitration_id=arb_id, data=data, is_extended_id=True)
-        self.bus.send(msg)
-        if True:
-            print([msg])
-
-
-class MotorMode(IntEnum):
-    Reset = 0
-    Calibration = 1
-    Run = 2
-
-
-class MotorError(IntEnum):
-    Undervoltage = 1
-    Overcurrent = 2
-    Overtemperature = 4
-    MagneticEncodingFault = 8
-    HallEncodingFault = 16
-    Uncalibrated = 32
-
-
-@dataclass
-class Feedback():
-    motor_id: int
-    errors: list
-    angle: float
-    velocity: float
-    torque: float
-    temp: float
+        self.can_bus.send(msg)
+        print([msg])
 
 
 class Actuator:
@@ -103,29 +107,48 @@ class Actuator:
         self.id_field = self.motor_id + (self.host_id << 8)
 
     def get_feedback(self):
-        res = self.bus.recv()
-        # assert(res.data[0] == 0x2)
-        unpack = struct.Struct('<H').unpack
+        def _unpack(x: Buffer) -> int:
+            return struct.Struct('>H').unpack(x)[0]
+
+        def _unpack_range(x: Buffer, r: int) -> float:
+            return _unpack(x) / 65535 * r - r / 2
+
+        def _get_error_bit(error_bits: int, i: int) -> bool:
+            return bool(error_bits & (1 << i))
 
         angle_range = 8 * math.pi
-        vel_range = 44
-        torque_range = 17
+        vel_range = 88
+        torque_range = 34
 
-        errors = (res.arbitration_id & 0x1F0000) >> 16
-        angle = unpack(res.data[0:2])[0]
-        angle = (angle / 65535 * angle_range) - angle_range / 2
+        res = self.bus.recv()
 
-        velocity = unpack(res.data[2:4])[0]
-        velocity = (velocity / 65535 * vel_range) - vel_range / 2
+        angle = _unpack_range(res.data[0:2], angle_range)
+        velocity = _unpack_range(res.data[2:4], vel_range)
+        torque = _unpack_range(res.data[4:6], torque_range)
 
-        torque = unpack(res.data[4:6])[0]
-        torque = (torque / 65535 * torque_range) - torque_range / 2
+        temp = _unpack(res.data[6:8]) / 10
 
-        temp = unpack(res.data[6:8])[0] / 10
+        arb_id = res.arbitration_id
+        mode = MotorMode((arb_id >> 22) & 0x03)
+        unknown_mode = mode == MotorMode.Uknown
 
-        print(errors, angle, velocity, torque, temp)
+        error_bits = (arb_id >> 16) & 0x3F
+        status = MotorStatus(
+            mode=mode,
+            has_error=bool(error_bits) or unknown_mode,
+            unknown_mode=unknown_mode,
+            uncalibrated=_get_error_bit(error_bits, 5),
+            gridlock_overload=_get_error_bit(error_bits, 4),
+            magnetic_coding_fault=_get_error_bit(error_bits, 3),
+            overtemperature=_get_error_bit(error_bits, 2),
+            overcurrent=_get_error_bit(error_bits, 1),
+            undervoltage=_get_error_bit(error_bits, 0)
+        )
 
-        return
+        feedback = Feedback(1, status, angle, velocity, torque, temp)
+        print(feedback)
+
+        return feedback
 
     def enable(self):
         self.bus.send(CommunicationType.Enable, self.id_field)
@@ -163,12 +186,13 @@ class Actuator:
 
     def shutdown(self):
         self.disable()
-        self.bus.bus.shutdown()
+        self.bus.can_bus.shutdown()
 
 
 def main():
     a.enable()
     a.write_param(Parameter.RunMode, 1)
+    a.disable()
 
     a.write_param(Parameter.LimitSpd, 50.0)
     a.write_param(Parameter.LocKp, 30.0)
