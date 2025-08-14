@@ -108,7 +108,7 @@ class Actuator:
 
     def get_feedback(self):
         def _unpack(x: Buffer) -> int:
-            return struct.Struct('>H').unpack(x)[0]
+            return struct.unpack('>H', x)[0]
 
         def _unpack_range(x: Buffer, r: int) -> float:
             return _unpack(x) / 65535 * r - r / 2
@@ -165,18 +165,28 @@ class Actuator:
         - 2~3: 00
         - 4~7: data (little-endian)
         """
-        int_pack = struct.Struct('<I').pack
-        pid_bytes = int_pack(pid)[:2]
+        pid_bytes = struct.pack('<I', pid)[:2]
 
         if pid in [0x7005, 0x7026, 0x7028, 0x7029]:
-            value_bytes = int_pack(value)
+            value_bytes = struct.pack('<I', value)
         else:
-            value_bytes = struct.Struct('<f').pack(value)
+            value_bytes = struct.pack('<f', value)
 
         data = bytes([*pid_bytes, 0, 0, *value_bytes])
         self.bus.send(CommunicationType.WriteParameter, self.id_field, data)
 
         return self.get_feedback()
+
+    def read_param(self, pid: Parameter) -> int:
+        pid_bytes = struct.pack('<I', pid)[:2]
+        data = bytes([*pid_bytes, 0, 0, 0, 0, 0, 0])
+
+        self.bus.send(CommunicationType.ReadParameter, self.id_field, data)
+
+        res = self.bus.recv()
+        res_value = struct.unpack('<f', res.data[4:])[0]
+
+        return res_value
 
     def command(self):
         pass
@@ -192,10 +202,9 @@ class Actuator:
 def main():
     a.enable()
     a.write_param(Parameter.RunMode, 1)
-    a.disable()
 
     a.write_param(Parameter.LimitSpd, 50.0)
-    a.write_param(Parameter.LocKp, 30.0)
+    a.write_param(Parameter.LocKp, 50.0)
     a.write_param(Parameter.SpdKp, 1.0)
 
     a.write_param(Parameter.LocRef, 0)
