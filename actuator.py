@@ -10,7 +10,7 @@ from collections.abc import Buffer
 
 
 CAN_PORT = "can0"
-ZERO_BYTE = [0, 0, 0, 0, 0, 0, 0, 0]
+ZERO_DATA = [0, 0, 0, 0, 0, 0, 0, 0]
 
 
 class CommunicationType(IntEnum):
@@ -92,7 +92,7 @@ class RobstrideBus:
             Exception("response error")
         return res
 
-    def send(self, comm_type: CommunicationType, id_field: int, data: bytes | bytearray | int | Iterable[int] | None = ZERO_BYTE):
+    def send(self, comm_type: CommunicationType, id_field: int, data: bytes | bytearray | int | Iterable[int] | None = ZERO_DATA):
         arb_id = id_field + (comm_type << 24)
         msg = can.Message(arbitration_id=arb_id, data=data, is_extended_id=True)
         self.can_bus.send(msg)
@@ -186,12 +186,18 @@ class Actuator:
         res = self.bus.recv()
         res_value = struct.unpack('<f', res.data[4:])[0]
 
-        return res_value
+        return res_value, self.get_feedback()
+
+    def get_device_info(self):
+        self.bus.send(CommunicationType.DeviceID, self.id_field, ZERO_DATA)
+        res = self.bus.recv()
+        return struct.unpack('<f', res.data)[0]
+
+    def set_mechanical_zero(self):
+        self.bus.send(CommunicationType.MechanicalZero, self.id_field, [1, 0, 0, 0, 0, 0, 0, 0])
+        return self.get_feedback()
 
     def command(self):
-        pass
-
-    def get_id(self):
         pass
 
     def shutdown(self):
