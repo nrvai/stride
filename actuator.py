@@ -15,7 +15,7 @@ ZERO_DATA = [0, 0, 0, 0, 0, 0, 0, 0]
 
 class CommunicationType(IntEnum):
     DeviceID = 0
-    ControlMode = 1
+    Control = 1
     Feedback = 2
     Enable = 3
     Disable = 4
@@ -96,7 +96,7 @@ class RobstrideBus:
         arb_id = id_field + (comm_type << 24)
         msg = can.Message(arbitration_id=arb_id, data=data, is_extended_id=True)
         self.can_bus.send(msg)
-        print([msg])
+        # print([msg])
 
 
 class Actuator:
@@ -184,21 +184,21 @@ class Actuator:
         self.bus.send(CommunicationType.ReadParameter, self.id_field, data)
 
         res = self.bus.recv()
-        res_value = struct.unpack('<f', res.data[4:])[0]
-
-        return res_value, self.get_feedback()
+        return struct.unpack('<f', res.data[4:])[0]
 
     def get_device_info(self):
         self.bus.send(CommunicationType.DeviceID, self.id_field, ZERO_DATA)
         res = self.bus.recv()
-        return struct.unpack('<f', res.data)[0]
+        return struct.unpack('<Q', res.data)[0]
 
     def set_mechanical_zero(self):
         self.bus.send(CommunicationType.MechanicalZero, self.id_field, [1, 0, 0, 0, 0, 0, 0, 0])
         return self.get_feedback()
 
-    def command(self):
-        pass
+    def command(self, torque):
+        id_field = self.motor_id + (torque << 8)
+        self.bus.send(CommunicationType.Control, id_field, ZERO_DATA)
+        return self.get_feedback()
 
     def shutdown(self):
         self.disable()
@@ -207,12 +207,9 @@ class Actuator:
 
 def main():
     a.enable()
+
     a.write_param(Parameter.RunMode, 1)
-
     a.write_param(Parameter.LimitSpd, 50.0)
-    a.write_param(Parameter.LocKp, 50.0)
-    a.write_param(Parameter.SpdKp, 1.0)
-
     a.write_param(Parameter.LocRef, 0)
     time.sleep(2)
 
@@ -230,5 +227,7 @@ def main():
 try:
     a = Actuator(127)
     main()
-except:
+except Exception as e:
+    print(e)
+except KeyboardInterrupt:
     a.shutdown()
