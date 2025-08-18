@@ -14,6 +14,7 @@ class CommunicationType(IntEnum):
     Enable = 3
     Disable = 4
     MechanicalZero = 6
+    SetCanID = 7
     ReadParameter = 17
     WriteParameter = 18
     FaultFeedback = 21
@@ -59,4 +60,8 @@ class RobstrideBus:
     def send(self, comm_type: CommunicationType, id_field: int, data: bytes | bytearray | int | Iterable[int] | None = ZERO_DATA):
         arb_id = id_field + (comm_type << 24)
         msg = can.Message(arbitration_id=arb_id, data=data, is_extended_id=True)
+        self.can_bus.send(msg)
+
+    def send_raw(self, arb_id: int, data: int, is_extended_id=True):
+        msg = can.Message(arbitration_id=arb_id, data=data, is_extended_id=is_extended_id)
         self.can_bus.send(msg)

@@ -51,7 +51,7 @@ class Actuator:
         self.bus = RobstrideBus()
         self.motor_id = motor_id
         self.host_id = host_id
-        self.id_field = self.motor_id + (self.host_id << 8)
+        self.id_field = self.motor_id | (self.host_id << 8)
 
     def get_feedback(self) -> Feedback:
         def _unpack(x: Buffer) -> int:
@@ -120,6 +120,28 @@ class Actuator:
         res = self.bus.recv()
         return struct.unpack('<f', res.data[4:])[0]
 
+    def set_can_id(self, new_can_id: int) -> int:
+        self.disable()
+        new_id_field = self.motor_id | (self.host_id << 8) | (new_can_id << 16)
+
+        self.motor_id = new_can_id
+        self.id_field = self.motor_id | (self.host_id << 8)
+
+        self.bus.send(CommunicationType.SetCanID, new_id_field)
+        res = self.bus.recv()
+        data = struct.unpack('<Q', res.data)[0]
+        self.enable()
+        return data
+
+    def run_calibration(self) -> int:
+        self.disable()
+        calibration_id = 0x05000000 | (self.host_id << 8) | self.motor_id
+        self.bus.send_raw(calibration_id, [8, 0, 0, 0, 0, 0, 0, 0])
+        init_res = self.bus.recv()
+        cali_res = self.bus.recv()
+        self.enable()
+        return init_res, cali_res
+
     def get_device_info(self) -> int:
         self.bus.send(CommunicationType.DeviceID, self.id_field)
         res = self.bus.recv()
@@ -134,7 +156,7 @@ class Actuator:
             raise ActuatorLimitException("Torque command is over actuator limit")
 
         norm_torque = int((torque + Actuator.TORQUE_LIMIT) / (2 * Actuator.TORQUE_LIMIT) * 65535)
-        id_field = self.motor_id + (norm_torque << 8)
+        id_field = self.motor_id | (norm_torque << 8)
 
         self.bus.send(CommunicationType.Control, id_field)
         return self.get_feedback()
@@ -146,18 +168,19 @@ class Actuator:
 
 def main():
     a.enable()
-    a.write_param(Parameter.RunMode, 1)  # put motor into operational mode
-    a.set_mechanical_zero()
-    a.write_param(Parameter.LocKp, 40)
-    a.write_param(Parameter.SpdKp, 6)
-    a.write_param(Parameter.SpdKi, 0.02)
-    a.write_param(Parameter.LimitSpd, 44)
+    f = b.enable()
 
-    a.write_param(Parameter.LocRef, 0.6)
+    f = b.run_calibration()
+    print(f)
+    # a.torque_command(-0.25)
+    # time.sleep(4)
+    # print("a")
+    # f = b.write_param(Parameter.RunMode, 1)
+    # print("b")
 
-    # a.torque_command(1.0) # apply 1Nm torque
+    a.torque_command(0.5)  # apply 1Nm torque
 
-    time.sleep(2)
+    time.sleep(0.5)
     # a.torque_command(-1.0) # apply 1Nm torque in counter-clockwise
     # time.sleep(1)
     q = a.read_param(Parameter.MechPos)
@@ -168,7 +191,8 @@ def main():
 
 if __name__ == "__main__":
     try:
-        a = Actuator(127)
+        a = Actuator(1)
+        b = Actuator(128)
         main()
     except KeyboardInterrupt:
         a.shutdown()
