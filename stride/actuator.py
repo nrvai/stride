@@ -47,8 +47,8 @@ class Actuator:
     VELOCITY_LIMIT = 44
     TORQUE_LIMIT = 17
 
-    def __init__(self, motor_id: int, host_id: int = 0xAA):
-        self.bus = RobstrideBus()
+    def __init__(self, bus: RobstrideBus, motor_id: int, host_id: int = 0xAA):
+        self.bus = bus
         self.motor_id = motor_id
         self.host_id = host_id
         self.id_field = self.motor_id | (self.host_id << 8)
@@ -88,7 +88,7 @@ class Actuator:
             undervoltage=_get_error_bit(error_bits, 0)
         )
 
-        return Feedback(1, status, angle, velocity, torque, temp)
+        return Feedback(self.motor_id, status, angle, velocity, torque, temp)
 
     def enable(self) -> Feedback:
         self.bus.send(CommunicationType.Enable, self.id_field)
@@ -161,38 +161,9 @@ class Actuator:
         self.bus.send(CommunicationType.Control, id_field)
         return self.get_feedback()
 
+    def get_all_params(self):
+        return {param: self.read_param(Parameter[param]) for param in Parameter._member_names_}
+
     def shutdown(self):
         self.disable()
         self.bus.can_bus.shutdown()
-
-
-def main():
-    a.enable()
-    f = b.enable()
-
-    f = b.run_calibration()
-    print(f)
-    # a.torque_command(-0.25)
-    # time.sleep(4)
-    # print("a")
-    # f = b.write_param(Parameter.RunMode, 1)
-    # print("b")
-
-    a.torque_command(0.5)  # apply 1Nm torque
-
-    time.sleep(0.5)
-    # a.torque_command(-1.0) # apply 1Nm torque in counter-clockwise
-    # time.sleep(1)
-    q = a.read_param(Parameter.MechPos)
-    print(q)
-
-    a.shutdown()
-
-
-if __name__ == "__main__":
-    try:
-        a = Actuator(1)
-        b = Actuator(128)
-        main()
-    except KeyboardInterrupt:
-        a.shutdown()
