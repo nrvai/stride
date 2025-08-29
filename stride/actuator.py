@@ -46,6 +46,8 @@ class Actuator:
     ANGLE_LIMIT = 4 * math.pi
     VELOCITY_LIMIT = 44
     TORQUE_LIMIT = 17
+    KP_LIMIT = 500
+    KD_LIMIT = 5
 
     def __init__(self, bus: RobstrideBus, motor_id: int, host_id: int = 0xAA):
         self.bus = bus
@@ -96,6 +98,10 @@ class Actuator:
 
     def disable(self) -> Feedback:
         self.bus.send(CommunicationType.Disable, self.id_field)
+        return self.get_feedback()
+
+    def request_feedback(self) -> Feedback:
+        self.bus.send(CommunicationType.Feedback, self.id_field)
         return self.get_feedback()
 
     def write_param(self, pid: Parameter, value: int | float) -> Feedback:
@@ -159,6 +165,37 @@ class Actuator:
         id_field = self.motor_id | (norm_torque << 8)
 
         self.bus.send(CommunicationType.Control, id_field)
+        return self.get_feedback()
+
+    def command(self, torque: float, angle: float, velocity, kp: float, kd: float):
+        def _normalize_value(value: float, max_value: float, symmetric=True):
+            value = value + max_value if symmetric else value
+            return int(value / (2 * max_value) * 65535)
+
+        if abs(torque) > Actuator.TORQUE_LIMIT:
+            raise ActuatorLimitException("Torque command is over actuator limit")
+        if abs(angle) > Actuator.ANGLE_LIMIT:
+            raise ActuatorLimitException("Angle command is over actuator limit")
+        if velocity > Actuator.VELOCITY_LIMIT:
+            raise ActuatorLimitException("Velocity command is over actuator limit")
+
+        norm_torque = _normalize_value(torque, Actuator.TORQUE_LIMIT)
+        norm_angle = _normalize_value(angle, Actuator.ANGLE_LIMIT)
+        norm_velocity = _normalize_value(velocity, Actuator.VELOCITY_LIMIT)
+
+        norm_kp = _normalize_value(kp, Actuator.KP_LIMIT, False)
+        norm_kd = _normalize_value(kd, Actuator.KD_LIMIT, False)
+
+        id_field = self.motor_id | (norm_torque << 8)
+
+        angle_bytes = struct.pack('>H', norm_angle)
+        velocity_bytes = struct.pack('>H', norm_velocity)
+        kp_bytes = struct.pack('>H', norm_kp)
+        kd_bytes = struct.pack('>H', norm_kd)
+
+        data = [*angle_bytes, *velocity_bytes, *kp_bytes, *kd_bytes]
+
+        self.bus.send(CommunicationType.Control, id_field, data)
         return self.get_feedback()
 
     def get_all_params(self):
