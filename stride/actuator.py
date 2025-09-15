@@ -159,7 +159,7 @@ class Actuator:
 
     def torque_command(self, torque: float) -> Feedback:
         if abs(torque) > Actuator.TORQUE_LIMIT:
-            raise ActuatorLimitException("Torque command is over actuator limit")
+            raise ActuatorLimitException("Torque command is over the actuator limit")
 
         norm_torque = int((torque + Actuator.TORQUE_LIMIT) / (2 * Actuator.TORQUE_LIMIT) * 65535)
         id_field = self.motor_id | (norm_torque << 8)
@@ -173,11 +173,11 @@ class Actuator:
             return int(value / (2 * max_value) * 65535)
 
         if abs(torque) > Actuator.TORQUE_LIMIT:
-            raise ActuatorLimitException("Torque command is over actuator limit")
+            raise ActuatorLimitException("Torque command is over the actuator limit")
         if abs(angle) > Actuator.ANGLE_LIMIT:
-            raise ActuatorLimitException("Angle command is over actuator limit")
+            raise ActuatorLimitException("Angle command is over the actuator limit")
         if velocity > Actuator.VELOCITY_LIMIT:
-            raise ActuatorLimitException("Velocity command is over actuator limit")
+            raise ActuatorLimitException("Velocity command is over the actuator limit")
 
         norm_torque = _normalize_value(torque, Actuator.TORQUE_LIMIT)
         norm_angle = _normalize_value(angle, Actuator.ANGLE_LIMIT)
