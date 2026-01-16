@@ -54,8 +54,9 @@ class Actuator:
         self.motor_id = motor_id
         self.host_id = host_id
         self.id_field = self.motor_id | (self.host_id << 8)
+        self.limits = [-math.inf, math.inf]
 
-    def get_feedback(self) -> Feedback:
+    def get_feedback(self, timeout=None) -> Feedback:
         def _unpack(x: Buffer) -> int:
             return struct.unpack('>H', x)[0]
 
@@ -65,11 +66,19 @@ class Actuator:
         def _get_error_bit(error_bits: int, i: int) -> bool:
             return bool(error_bits & (1 << i))
 
-        res = self.bus.recv()
+        res = self.bus.recv(timeout)
+        if not res:
+            raise Exception(f"timeout on {self.motor_id}")
 
         angle = _unpack_range(res.data[0:2], Actuator.ANGLE_LIMIT * 2)
         velocity = _unpack_range(res.data[2:4], Actuator.VELOCITY_LIMIT * 2)
         torque = _unpack_range(res.data[4:6], Actuator.TORQUE_LIMIT * 2)
+
+        if angle < self.limits[0] or angle > self.limits[1]:
+            print(f"WARNING: Joint limits shutdown on motor_id: {self.motor_id}; angle: {angle}; limits: {self.limits}")
+            self.disable()
+
+        can_id = (res.arbitration_id >> 8) & 0xFF
 
         temp = _unpack(res.data[6:8]) / 10
 
@@ -90,7 +99,7 @@ class Actuator:
             undervoltage=_get_error_bit(error_bits, 0)
         )
 
-        return Feedback(self.motor_id, status, angle, velocity, torque, temp)
+        return Feedback(can_id, status, angle, velocity, torque, temp)
 
     def enable(self) -> Feedback:
         self.bus.send(CommunicationType.Enable, self.id_field)
@@ -100,9 +109,9 @@ class Actuator:
         self.bus.send(CommunicationType.Disable, self.id_field)
         return self.get_feedback()
 
-    def request_feedback(self) -> Feedback:
+    def request_feedback(self, timeout=None) -> Feedback:
         self.bus.send(CommunicationType.Feedback, self.id_field)
-        return self.get_feedback()
+        return self.get_feedback(timeout)
 
     def write_param(self, pid: Parameter, value: int | float) -> Feedback:
         pid_bytes = struct.pack('<I', pid)[:2]
@@ -125,6 +134,11 @@ class Actuator:
 
         res = self.bus.recv()
         return struct.unpack('<f', res.data[4:])[0]
+
+    def save_params(self) -> Feedback:
+        data = bytes([1, 2, 3, 4, 5, 6, 7, 8])
+        self.bus.send(CommunicationType.SaveParameters, self.id_field, data)
+        return self.get_feedback()
 
     def set_can_id(self, new_can_id: int) -> int:
         self.disable()
@@ -167,7 +181,7 @@ class Actuator:
         self.bus.send(CommunicationType.Control, id_field)
         return self.get_feedback()
 
-    def command(self, torque: float, angle: float, velocity, kp: float, kd: float):
+    def command(self, torque: float, angle: float, velocity: float, kp: float, kd: float):
         def _normalize_value(value: float, max_value: float, symmetric=True):
             value = value + max_value if symmetric else value
             return int(value / (2 * max_value) * 65535)
@@ -197,6 +211,35 @@ class Actuator:
 
         self.bus.send(CommunicationType.Control, id_field, data)
         return self.get_feedback()
+
+    def hold_position(self, kp, kd):
+        angle = self.request_feedback().angle
+        self.command(0.0, angle, 0.0, kp, kd)
+
+    def measure_joint_limit(self, velocity_target, break_cycles):
+        self.command(0.0, 0.0, velocity_target, 0.0, 5.0)
+        break_count = 0
+        while True:
+            f = self.request_feedback()
+            if abs(f.velocity) < abs(velocity_target) / 2:
+                break_count += 1
+                if break_count == break_cycles:
+                    return float(f.angle)
+            else:
+                break_count = 0
+            time.sleep(0.01)
+
+    def find_joint_limits(self, velocity_target, break_cycles):
+        self.limits = [-math.inf, math.inf]
+        limits = [
+            self.measure_joint_limit(-velocity_target, break_cycles),
+            self.measure_joint_limit(velocity_target, break_cycles)
+        ]
+
+        self.command(0, sum(limits) / 2, 0.0, 2.0, 0.2)
+        time.sleep(0.5)
+        self.limits = limits
+        return self.limits
 
     def get_all_params(self):
         return {param: self.read_param(Parameter[param]) for param in Parameter._member_names_}

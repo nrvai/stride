@@ -18,6 +18,7 @@ class CommunicationType(IntEnum):
     ReadParameter = 17
     WriteParameter = 18
     FaultFeedback = 21
+    SaveParameters = 22
 
 
 class Parameter(IntEnum):
@@ -51,8 +52,8 @@ class RobstrideBus:
     def __init__(self):
         self.can_bus = can.interface.Bus(interface='socketcan', channel=CAN_PORT)
 
-    def recv(self):
-        res = self.can_bus.recv()
+    def recv(self, timeout=None):
+        res = self.can_bus.recv(timeout)
         if not res or res.is_error_frame:
             Exception("response error")
         return res
