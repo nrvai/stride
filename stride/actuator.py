@@ -216,6 +216,21 @@ class Actuator:
         angle = self.request_feedback().angle
         self.command(0.0, angle, 0.0, kp, kd)
 
+    def get_motor_current(self, phase_resistance=0.30, idle_power=3.5):
+        iq_filt = self.read_param(Parameter.IqFilt)
+        omega = self.read_param(Parameter.MechVel)
+        vbus = self.read_param(Parameter.VBus)
+
+        limit_torque = self.read_param(Parameter.LimitTorque)
+        limit_cur = self.read_param(Parameter.LimitCur)
+
+        mech_power = (limit_torque / limit_cur) * iq_filt * omega
+        cu_power = 1.5 * phase_resistance * iq_filt**2
+
+        total_power = mech_power + cu_power + idle_power
+
+        return round(total_power / vbus, 2), vbus
+
     def measure_joint_limit(self, velocity_target, break_cycles):
         self.command(0.0, 0.0, velocity_target, 0.0, 5.0)
         break_count = 0

@@ -55,7 +55,7 @@ class RobstrideBus:
     def recv(self, timeout=None):
         res = self.can_bus.recv(timeout)
         if not res or res.is_error_frame:
-            Exception("response error")
+            raise Exception("response error")
         return res
 
     def send(self, comm_type: CommunicationType, id_field: int, data: bytes | bytearray | int | Iterable[int] | None = ZERO_DATA):
