@@ -56,7 +56,7 @@ class Actuator:
         self.id_field = self.motor_id | (self.host_id << 8)
         self.limits = [-math.inf, math.inf]
 
-    def get_feedback(self, timeout=None) -> Feedback:
+    def get_feedback(self, timeout=0.1) -> Feedback:
         def _unpack(x: Buffer) -> int:
             return struct.unpack('>H', x)[0]
 
@@ -66,7 +66,7 @@ class Actuator:
         def _get_error_bit(error_bits: int, i: int) -> bool:
             return bool(error_bits & (1 << i))
 
-        res = self.bus.recv(timeout)
+        res = self.bus.recv_match(self.motor_id, CommunicationType.Feedback, timeout)
         if not res:
             raise Exception(f"timeout on {self.motor_id}")
 
@@ -109,7 +109,7 @@ class Actuator:
         self.bus.send(CommunicationType.Disable, self.id_field)
         return self.get_feedback()
 
-    def request_feedback(self, timeout=None) -> Feedback:
+    def request_feedback(self, timeout=0.1) -> Feedback:
         self.bus.send(CommunicationType.Feedback, self.id_field)
         return self.get_feedback(timeout)
 
@@ -132,7 +132,10 @@ class Actuator:
 
         self.bus.send(CommunicationType.ReadParameter, self.id_field, data)
 
-        res = self.bus.recv()
+        res = self.bus.recv_match(self.motor_id, CommunicationType.ReadParameter)
+        if not res:
+            raise Exception(f"timeout on actuator {self.motor_id} read_param {pid.name}")
+
         return struct.unpack('<f', res.data[4:])[0]
 
     def save_params(self) -> Feedback:
@@ -228,8 +231,9 @@ class Actuator:
         cu_power = 1.5 * phase_resistance * iq_filt**2
 
         total_power = mech_power + cu_power + idle_power
+        current = round(total_power / vbus, 2) if vbus > 0 else 0.0
 
-        return round(total_power / vbus, 2), vbus
+        return current, vbus
 
     def measure_joint_limit(self, velocity_target, break_cycles):
         self.command(0.0, 0.0, velocity_target, 0.0, 5.0)

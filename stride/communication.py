@@ -1,6 +1,6 @@
 from enum import IntEnum
 from typing import Iterable
-
+import time
 import can
 
 CAN_PORT = "can0"
@@ -54,9 +54,27 @@ class RobstrideBus:
 
     def recv(self, timeout=None):
         res = self.can_bus.recv(timeout)
-        if not res or res.is_error_frame:
-            raise Exception("response error")
+        if res is None:
+            return None
+        if res.is_error_frame:
+            raise Exception("CAN error frame received")
         return res
+
+    def recv_match(self, motor_id, comm_type, timeout=0.1):
+        start_time = time.time()
+        while True:
+            res = self.recv(timeout)
+            if res is None:
+                return None
+
+            can_id = (res.arbitration_id >> 8) & 0xFF
+            res_type = (res.arbitration_id >> 24) & 0x1F
+
+            if can_id == motor_id and res_type == comm_type:
+                return res
+
+            if (time.time() - start_time) > timeout:
+                return None
 
     def send(self, comm_type: CommunicationType, id_field: int, data: bytes | bytearray | int | Iterable[int] | None = ZERO_DATA):
         arb_id = id_field + (comm_type << 24)
